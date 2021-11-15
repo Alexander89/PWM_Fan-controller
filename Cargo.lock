@@ -310,7 +310,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "t_i2c_01"
+name = "t_i2c_02"
 version = "0.1.0"
 dependencies = [
  "atsamd-hal",
