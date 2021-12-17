@@ -170,10 +170,7 @@ fn main() -> ! {
         let temp_f32 = temperature as f32 / 16.0;
 
         // debug print / output temperature
-        let _ = block!(uart.write(((temperature >> 8) & 0xFF) as u8));
-        let _ = block!(uart.write((temperature & 0xFF) as u8));
-        let _ = block!(uart.write(0xFF));
-        let _ = block!(uart.write(0xFF));
+        let _ = block!(uart.write((temperature / 4) as u8));
 
         // debug print / output temperature
         let (_, bytes) = f32_to_str(temp_f32, 2);
