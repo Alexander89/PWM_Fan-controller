@@ -1,6 +1,15 @@
-# EIC test
+# PWM-Fan-controller
 
-# Hardware: Seeeduino XIAO
+Control a pwm fan by a DS18B20 temperature sensor. Implemented to use a Seeeduino xiao_m0 board
+
+## Setup:
+
+1. Connect the fan to the required power and use a logic level converter to connect the pwm pin to a1
+2. connect the DS18B20 to 3.3V power of the XIAO_m0 add a 4.7K Pull-UP and connect the data pin to pin A2
+
+Upload the program. `--release` is required. Otherwise the onewire interface is not fast enough.
+
+## Hardware: Seeeduino XIAO
 
 This crate provides a type-safe API for working with the [Seeed Studio
 Seeeduino XIAO](http://wiki.seeedstudio.com/Seeeduino-XIAO/).

@@ -1,19 +1,23 @@
 [package]
-name = "t_i2c_02"
+name = "pwm-fan-controller"
 version = "0.1.0"
-edition = "2021"
+edition = "2018"
+author = ["Alex Halemba <alex-halemba@gmx.de>"]
+description = "control a pwm fan by a DS18B20 temperature sensor. Implemented to use a Seeeduino xiao_m0 board"
 
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-xiao_m0 = {version="0.11.0", features=["rt"]}
-atsamd-hal = { version = "0.13", default-features=false, features=["unproven"] }
+xiao_m0 = {path = "../atsamd/boards/xiao_m0", version="0.11.0", features=["rt", "unproven", "usb"]}
+# atsamd-hal = { version = "0.13", default-features=false, features=["unproven"] }
 cortex-m = "0.7"
 cortex-m-rt = "^0.6.15"
 embedded-hal = "0.2.6"
+onewire = "0.3.13"
+usb-device = "0.2.8"
+usbd-serial = "0.1.1"
 
-[features]
-default = ["atsamd-hal/samd21g", "atsamd-hal/samd21g-rt"]
+# [features]
+# default = ["atsamd-hal/samd21g", "atsamd-hal/samd21g-rt"]
 
 
 [profile.release]

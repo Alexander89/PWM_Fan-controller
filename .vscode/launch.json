@@ -1,0 +1,18 @@
+{
+    "configurations": [
+        {
+            "name": "Remote Cortex_m",
+            "type": "cortex-debug",
+            "request": "launch",
+            "cwd": "${workspaceRoot}",
+            "executable": "${workspaceRoot}/target/thumbv6m-none-eabi/release/test",
+            "servertype": "openocd",
+            "runToMain": true,
+            "gdbpath": "arm-none-eabi-gdb",
+            "configFiles": [
+                "interface/ftdi/ft232h-module-swd.cfg",
+                "target/at91samdXX.cfg"
+            ],
+        }
+    ]
+}

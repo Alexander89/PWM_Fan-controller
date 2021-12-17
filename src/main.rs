@@ -1,58 +1,57 @@
-//! Uses an external interrupt to blink an LED.
-//!
-//! You need to connect a button between a9 and ground. Each time the button
-//! is pressed, the LED will toggle.
-//!
+//! Driver to control the fan with and DS18B20 temperature sensor
+
 #![no_std]
 #![no_main]
 
-use core::cell::RefCell;
-use cortex_m::{interrupt::Mutex, peripheral::NVIC};
+pub mod helper;
+mod usb_serial;
+
+use helper::f32_to_str;
+use xiao_m0::pac::interrupt;
+
+use core::{cell::RefCell, convert::Infallible};
+use cortex_m::interrupt::Mutex;
 use cortex_m_rt::entry;
 use hal::{
     clock::ClockGenId,
     clock::GenericClockController,
-    eic::pin::ExtInt5,
-    eic::{
-        pin::{ExtInt9, Sense},
-        EIC,
-    },
-    gpio::v2::{Pin, PullUpInterrupt},
-    pac::{self, interrupt, CorePeripherals, Peripherals},
+    pac::{self, CorePeripherals, Peripherals},
     prelude::*,
+    pwm::{Channel, Pwm0},
 };
-use xiao_m0::{hal, Led0, Led1, Led2};
+use usb_serial::UsbSerial;
+use xiao_m0::{
+    hal::{self, delay::Delay, gpio::v2::E},
+    Led0, Led1, Led2,
+};
+
+use onewire::{
+    ds18b20::{self, DS18B20},
+    DeviceSearch, OneWire,
+};
 
 type RefMutOpt<T> = Mutex<RefCell<Option<T>>>;
 static LED_1: RefMutOpt<Led1> = Mutex::new(RefCell::new(None));
 static LED_2: RefMutOpt<Led2> = Mutex::new(RefCell::new(None));
+static mut SERIAL: Option<UsbSerial> = None;
 
 #[entry]
 fn main() -> ! {
-    run()
-}
-fn run() -> ! {
     let mut peripherals = Peripherals::take().unwrap();
     let mut core = CorePeripherals::take().unwrap();
-    let mut clocks = GenericClockController::with_internal_8mhz(
+    let mut clocks = GenericClockController::with_internal_32kosc(
         peripherals.GCLK,
         &mut peripherals.PM,
         &mut peripherals.SYSCTRL,
         &mut peripherals.NVMCTRL,
     );
-
+    let mut delay = Delay::new(core.SYST, &mut clocks);
     let pins = xiao_m0::Pins::new(peripherals.PORT);
-    let mut l0: Led0 = pins.led0.into();
-    cortex_m::interrupt::free(|cs| {
-        let mut l: Led1 = pins.led1.into();
-        l.set_high().unwrap();
-        LED_1.borrow(cs).replace(Some(l));
-        let mut l: Led2 = pins.led2.into();
-        l.set_high().unwrap();
-        LED_2.borrow(cs).replace(Some(l));
-    });
 
-    let generator = clocks
+    let mut l0: Led0 = pins.led0.into();
+
+    // setup pwm
+    let gclk2 = clocks
         .configure_gclk_divider_and_source(
             ClockGenId::GCLK2,
             1,
@@ -60,75 +59,115 @@ fn run() -> ! {
             false,
         )
         .unwrap();
+    let clock = &clocks.tcc0_tcc1(&gclk2).unwrap();
+    let mut pwm = Pwm0::new(clock, 25.khz(), peripherals.TCC0, &mut peripherals.PM);
+    let _p3 = pins.a1.into_alternate::<E>();
 
-    let eic_clock = clocks.eic(&generator).unwrap();
-    let mut eic = EIC::init(&mut peripherals.PM, eic_clock, peripherals.EIC);
+    // setup temp sensor
+    let mut ds18b20_pin = pins.a2.into_readable_output();
+    let mut wire = OneWire::new(&mut ds18b20_pin, false);
 
-    let p7: Pin<_, PullUpInterrupt> = pins.a7.into();
-    let mut extint9 = ExtInt9::new(p7);
+    let mut search = DeviceSearch::new();
+    let ds18b20 = loop {
+        if let Some(device) = wire.search_next(&mut search, &mut delay).unwrap() {
+            if let ds18b20::FAMILY_CODE = device.address[0] {
+                break Some(DS18B20::new::<Infallible>(device).unwrap());
+            }
+        } else {
+            panic!();
+        }
+    };
 
-    let p9: Pin<_, PullUpInterrupt> = pins.a9.into();
-    let mut extint5 = ExtInt5::new(p9);
+    // setup serial + leds
+    let serial = {
+        let led1 = pins.led1;
+        let led2 = pins.led2;
+        let usb_dm = pins.usb_dm;
+        let usb_dp = pins.usb_dp;
+        let usb = peripherals.USB;
+        let pm = &mut peripherals.PM;
+        let nvic = &mut core.NVIC;
+        cortex_m::interrupt::free(|cs| {
+            let mut l: Led1 = led1.into();
+            l.set_high().unwrap();
+            LED_1.borrow(cs).replace(Some(l));
+            let mut l: Led2 = led2.into();
+            l.set_high().unwrap();
+            LED_2.borrow(cs).replace(Some(l));
 
-    extint9.sense(&mut eic, Sense::FALL);
-    extint9.enable_interrupt(&mut eic);
-    extint9.filter(&mut eic, true);
+            // usb serial
+            let serial = UsbSerial::init(&mut clocks, usb, pm, usb_dm, usb_dp, nvic);
 
-    extint5.sense(&mut eic, Sense::FALL);
-    extint5.enable_interrupt(&mut eic);
-    extint5.filter(&mut eic, true);
+            unsafe {
+                SERIAL = Some(serial);
+                SERIAL.as_mut().unwrap()
+            }
+        })
+    };
 
-    // Enable EIC interrupt in the NVIC
-    unsafe {
-        core.NVIC.set_priority(interrupt::EIC, 2);
-        NVIC::unmask(interrupt::EIC);
-    }
+    // config fan values
+    let max_duty = pwm.get_max_duty();
+
+    pwm.set_duty(Channel::_0, max_duty / 32);
+    pwm.enable(Channel::_0);
+
+    let min = max_duty / 12;
+    let max = max_duty;
+
+    let speed = |proc: u32| {
+        if proc == 0 {
+            0
+        } else {
+            min + ((max - min) * proc) / 100
+        }
+    };
 
     loop {
+        // cycle state led
         let _ = l0.toggle();
 
-        for _ in 0..0xfffff {
-            cortex_m::asm::nop();
-        }
+        // get temp value (/ 16 to convert to float value)
+        let temperature = if let Some(ds18b20) = ds18b20.as_ref() {
+            // request sensor to measure temperature
+            let resolution = ds18b20.measure_temperature(&mut wire, &mut delay).unwrap();
+
+            // wait for completion, depends on resolution
+            delay.delay_ms(resolution.time_ms());
+
+            // read temperature
+            ds18b20.read_temperature(&mut wire, &mut delay).unwrap()
+        } else {
+            0
+        } as f32
+            / 16.0;
+
+        // debug print / output temperature
+        let (_, bytes) = f32_to_str(temperature, 3);
+        serial.serial_write_len(&(bytes as [u8; 12]), 12);
+        serial.serial_write(b"\r\n");
+
+        // calc fan speed in % (max 100 %)
+        let min = 25.0;
+        let max = 40.0;
+        let a = 100.0 / (max - min);
+
+        let proc = ((temperature.max(min) - min) * a).min(100.0) as u32;
+
+        // set fan speed
+        pwm.set_duty(Channel::_0, speed(proc));
     }
 }
 
-// #[interrupt]
-// fn EVSYS() {
-//     cortex_m::interrupt::free(|cs| {
-//         let mut l = LED_1.borrow(cs).borrow_mut();
-//         if l.is_some() {
-//             l.as_mut().unwrap().toggle().unwrap();
-//         }
-//     });
-// }
-
+// poll USB interface with interrupt
 #[interrupt]
-fn EIC() {
-    cortex_m::interrupt::free(|cs| {
-        let mut l1 = LED_1.borrow(cs).borrow_mut();
-        let mut l2 = LED_2.borrow(cs).borrow_mut();
-
-        // Increase the counter and clear the interrupt.
-        let eic = unsafe { &*pac::EIC::ptr() };
-        // Accessing registers from interrupts context is safe
-        if eic.intflag.read().extint5().bit_is_set() {
-            if l1.is_some() {
-                l1.as_mut().unwrap().toggle().unwrap();
-            }
-            eic.intflag.modify(|_, w| w.extint5().set_bit());
-        }
-
-        if eic.intflag.read().extint9().bit_is_set() {
-            if l2.is_some() {
-                l2.as_mut().unwrap().toggle().unwrap();
-            }
-            eic.intflag.modify(|_, w| w.extint9().set_bit());
-        }
-    });
+fn USB() {
+    if let Some(serial) = unsafe { SERIAL.as_mut() } {
+        serial.poll();
+        let _ = serial.read_poll();
+    }
 }
 
-#[cfg(not(test))]
+// blink to show panic
 #[inline(never)]
 #[panic_handler]
 fn panic(_info: &core::panic::PanicInfo) -> ! {
@@ -143,6 +182,10 @@ fn panic(_info: &core::panic::PanicInfo) -> ! {
             if l.is_some() {
                 let _res = l.as_mut().unwrap().set_low();
             }
+            let mut l = LED_1.borrow(cs).borrow_mut();
+            if l.is_some() {
+                let _res = l.as_mut().unwrap().set_high();
+            }
         });
 
         for _ in 0..0xfffff {
@@ -152,6 +195,10 @@ fn panic(_info: &core::panic::PanicInfo) -> ! {
             let mut l = LED_2.borrow(cs).borrow_mut();
             if l.is_some() {
                 let _res = l.as_mut().unwrap().set_high();
+            }
+            let mut l = LED_1.borrow(cs).borrow_mut();
+            if l.is_some() {
+                let _res = l.as_mut().unwrap().set_low();
             }
         });
     }
