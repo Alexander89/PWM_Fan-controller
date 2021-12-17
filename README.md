@@ -9,6 +9,10 @@ Control a pwm fan by a DS18B20 temperature sensor. Implemented to use a Seeeduin
 
 Upload the program. `--release` is required. Otherwise the onewire interface is not fast enough.
 
+## USB
+
+if you connect the usb cable you will get the temperature readings with a `\r\n` at the end.
+
 ## Hardware: Seeeduino XIAO
 
 This crate provides a type-safe API for working with the [Seeed Studio
