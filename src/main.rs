@@ -78,23 +78,26 @@ fn main() -> ! {
         }
     };
 
-    // setup serial + leds
+    // setup static LEDs
+    let led1 = pins.led1;
+    let led2 = pins.led2;
+    cortex_m::interrupt::free(|cs| {
+        let mut l: Led1 = led1.into();
+        l.set_high().unwrap();
+        LED_1.borrow(cs).replace(Some(l));
+        let mut l: Led2 = led2.into();
+        l.set_high().unwrap();
+        LED_2.borrow(cs).replace(Some(l));
+    });
+
+    // setup static serial
     let serial = {
-        let led1 = pins.led1;
-        let led2 = pins.led2;
         let usb_dm = pins.usb_dm;
         let usb_dp = pins.usb_dp;
         let usb = peripherals.USB;
         let pm = &mut peripherals.PM;
         let nvic = &mut core.NVIC;
         cortex_m::interrupt::free(|cs| {
-            let mut l: Led1 = led1.into();
-            l.set_high().unwrap();
-            LED_1.borrow(cs).replace(Some(l));
-            let mut l: Led2 = led2.into();
-            l.set_high().unwrap();
-            LED_2.borrow(cs).replace(Some(l));
-
             // usb serial
             let serial = UsbSerial::init(&mut clocks, usb, pm, usb_dm, usb_dp, nvic);
 
