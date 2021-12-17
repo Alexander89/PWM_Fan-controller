@@ -173,7 +173,7 @@ fn USB() {
 fn panic(_info: &core::panic::PanicInfo) -> ! {
     use cortex_m::asm::nop;
 
-    loop {
+    for _ in 0..10 {
         for _ in 0..0xfffff {
             nop();
         }
@@ -202,4 +202,5 @@ fn panic(_info: &core::panic::PanicInfo) -> ! {
             }
         });
     }
+    pac::SCB::sys_reset();
 }
