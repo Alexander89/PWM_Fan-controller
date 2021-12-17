@@ -7,7 +7,13 @@ pub mod helper;
 mod usb_serial;
 
 use helper::f32_to_str;
-use xiao_m0::pac::interrupt;
+use xiao_m0::{
+    hal::{
+        prelude::nb::block,
+        sercom::v2::uart::{BaudMode, Oversampling},
+    },
+    pac::interrupt,
+};
 
 use core::{cell::RefCell, convert::Infallible};
 use cortex_m::interrupt::Mutex;
@@ -18,6 +24,7 @@ use hal::{
     pac::{self, CorePeripherals, Peripherals},
     prelude::*,
     pwm::{Channel, Pwm0},
+    sercom::v2::uart,
 };
 use usb_serial::UsbSerial;
 use xiao_m0::{
@@ -29,6 +36,8 @@ use onewire::{
     ds18b20::{self, DS18B20},
     DeviceSearch, OneWire,
 };
+
+use crate::helper::u32_to_str;
 
 type RefMutOpt<T> = Mutex<RefCell<Option<T>>>;
 static LED_1: RefMutOpt<Led1> = Mutex::new(RefCell::new(None));
@@ -90,6 +99,22 @@ fn main() -> ! {
         LED_2.borrow(cs).replace(Some(l));
     });
 
+    // Setup UART peripheral
+    let mut uart = {
+        let gclk0 = clocks.gclk0();
+        let clock = &clocks.sercom4_core(&gclk0).unwrap();
+        let pads = uart::Pads::default().rx(pins.a7).tx(pins.a6);
+        uart::Config::new(&mut peripherals.PM, peripherals.SERCOM4, pads, clock.freq())
+            .baud(
+                (115200 * 4).hz(),
+                BaudMode::Fractional(Oversampling::Bits16),
+            )
+            .stop_bits(uart::StopBits::OneBit)
+            .collision_detection(false)
+            .parity(uart::Parity::Odd)
+            .enable()
+    };
+
     // setup static serial
     let serial = {
         let usb_dm = pins.usb_dm;
@@ -97,7 +122,7 @@ fn main() -> ! {
         let usb = peripherals.USB;
         let pm = &mut peripherals.PM;
         let nvic = &mut core.NVIC;
-        cortex_m::interrupt::free(|cs| {
+        cortex_m::interrupt::free(|_| {
             // usb serial
             let serial = UsbSerial::init(&mut clocks, usb, pm, usb_dm, usb_dp, nvic);
 
@@ -141,11 +166,18 @@ fn main() -> ! {
             ds18b20.read_temperature(&mut wire, &mut delay).unwrap()
         } else {
             0
-        } as f32
-            / 16.0;
+        };
+        let temp_f32 = temperature as f32 / 16.0;
 
         // debug print / output temperature
-        let (_, bytes) = f32_to_str(temperature, 3);
+        let _ = block!(uart.write(((temperature >> 8) & 0xFF) as u8));
+        let _ = block!(uart.write((temperature & 0xFF) as u8));
+        let _ = block!(uart.write(0xFF));
+        let _ = block!(uart.write(0xFF));
+
+        // debug print / output temperature
+        let (_, bytes) = f32_to_str(temp_f32, 2);
+        serial.serial_write_len(&(bytes as [u8; 12]), 12);
         serial.serial_write_len(&(bytes as [u8; 12]), 12);
         serial.serial_write(b"\r\n");
 
@@ -154,7 +186,7 @@ fn main() -> ! {
         let max = 40.0;
         let a = 100.0 / (max - min);
 
-        let proc = ((temperature.max(min) - min) * a).min(100.0) as u32;
+        let proc = ((temp_f32.max(min) - min) * a).min(100.0) as u32;
 
         // set fan speed
         pwm.set_duty(Channel::_0, speed(proc));

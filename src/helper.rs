@@ -29,7 +29,7 @@ pub fn u32_to_str(num: u32) -> (usize, Buffer) {
     for i in 0..lng {
         let dig = value % 10;
         value /= 10;
-        buf[BUFFER_LAST_IDX - i] = b'0' + dig as u8;
+        buf[lng - i] = b'0' + dig as u8;
     }
     (lng, buf)
 }
