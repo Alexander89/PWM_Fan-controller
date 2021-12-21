@@ -10,7 +10,7 @@ use usbd_serial::{SerialPort, USB_CLASS_CDC};
 use xiao_m0::hal::{clock::GenericClockController, target_device::NVIC, usb::UsbBus};
 use xiao_m0::{pac, UsbDm, UsbDp};
 
-use crate::helper::u32_to_str;
+use string_helper::u32_to_str;
 
 static mut BUS_ALLOCATOR: Option<UsbBusAllocator<UsbBus>> = None;
 
@@ -48,7 +48,7 @@ impl UsbSerial {
 
     #[allow(dead_code)]
     pub fn serial_write_num(&mut self, num: usize) {
-        let (len, bytes) = u32_to_str(num as u32);
+        let (_len, bytes) = u32_to_str(num as u32);
         self.serial_write_len(&(bytes as [u8; 12]), 12)
     }
 
@@ -56,7 +56,7 @@ impl UsbSerial {
     pub fn serial_write_len(&mut self, bytes: &[u8], len: usize) {
         cortex_m::interrupt::free(|cs| {
             let mut serial = self.serial.borrow(cs).borrow_mut();
-            serial.write(&bytes[0..len]);
+            let _ = serial.write(&bytes[0..len]);
         });
     }
 }

@@ -3,17 +3,7 @@
 #![no_std]
 #![no_main]
 
-pub mod helper;
 mod usb_serial;
-
-use helper::f32_to_str;
-use xiao_m0::{
-    hal::{
-        prelude::nb::block,
-        sercom::v2::uart::{BaudMode, Oversampling},
-    },
-    pac::interrupt,
-};
 
 use core::{cell::RefCell, convert::Infallible};
 use cortex_m::interrupt::Mutex;
@@ -22,13 +12,15 @@ use hal::{
     clock::ClockGenId,
     clock::GenericClockController,
     pac::{self, CorePeripherals, Peripherals},
+    prelude::nb::block,
     prelude::*,
-    pwm::{Channel, Pwm0},
+    pwm::{Channel, Pwm1},
     sercom::v2::uart,
+    sercom::v2::uart::{BaudMode, Oversampling},
 };
 use usb_serial::UsbSerial;
 use xiao_m0::{
-    hal::{self, delay::Delay, gpio::v2::E},
+    hal::{self, delay::Delay, gpio::v2::E, pac::interrupt},
     Led0, Led1, Led2,
 };
 
@@ -37,7 +29,7 @@ use onewire::{
     DeviceSearch, OneWire,
 };
 
-use crate::helper::u32_to_str;
+use string_helper::f32_to_str;
 
 type RefMutOpt<T> = Mutex<RefCell<Option<T>>>;
 static LED_1: RefMutOpt<Led1> = Mutex::new(RefCell::new(None));
@@ -69,11 +61,11 @@ fn main() -> ! {
         )
         .unwrap();
     let clock = &clocks.tcc0_tcc1(&gclk2).unwrap();
-    let mut pwm = Pwm0::new(clock, 25.khz(), peripherals.TCC0, &mut peripherals.PM);
-    let _p3 = pins.a1.into_alternate::<E>();
+    let mut pwm = Pwm1::new(clock, 25.khz(), peripherals.TCC1, &mut peripherals.PM);
+    let _p3 = pins.a8.into_alternate::<E>();
 
     // setup temp sensor
-    let mut ds18b20_pin = pins.a2.into_readable_output();
+    let mut ds18b20_pin = pins.a5.into_readable_output();
     let mut wire = OneWire::new(&mut ds18b20_pin, false);
 
     let mut search = DeviceSearch::new();
@@ -105,10 +97,7 @@ fn main() -> ! {
         let clock = &clocks.sercom4_core(&gclk0).unwrap();
         let pads = uart::Pads::default().rx(pins.a7).tx(pins.a6);
         uart::Config::new(&mut peripherals.PM, peripherals.SERCOM4, pads, clock.freq())
-            .baud(
-                (115200 * 4).hz(),
-                BaudMode::Fractional(Oversampling::Bits16),
-            )
+            .baud(115200.hz(), BaudMode::Fractional(Oversampling::Bits16))
             .stop_bits(uart::StopBits::OneBit)
             .collision_detection(false)
             .parity(uart::Parity::Odd)
@@ -136,8 +125,8 @@ fn main() -> ! {
     // config fan values
     let max_duty = pwm.get_max_duty();
 
-    pwm.set_duty(Channel::_0, max_duty / 32);
-    pwm.enable(Channel::_0);
+    pwm.set_duty(Channel::_1, max_duty / 32);
+    pwm.enable(Channel::_1);
 
     let min = max_duty / 12;
     let max = max_duty;
@@ -173,9 +162,8 @@ fn main() -> ! {
         let _ = block!(uart.write((temperature / 4) as u8));
 
         // debug print / output temperature
-        let (_, bytes) = f32_to_str(temp_f32, 2);
-        serial.serial_write_len(&(bytes as [u8; 12]), 12);
-        serial.serial_write_len(&(bytes as [u8; 12]), 12);
+        let (l, bytes) = f32_to_str(temp_f32, 2);
+        serial.serial_write_len(&(bytes[(12 - l)..12]), l);
         serial.serial_write(b"\r\n");
 
         // calc fan speed in % (max 100 %)
@@ -186,7 +174,7 @@ fn main() -> ! {
         let proc = ((temp_f32.max(min) - min) * a).min(100.0) as u32;
 
         // set fan speed
-        pwm.set_duty(Channel::_0, speed(proc));
+        pwm.set_duty(Channel::_1, speed(proc));
     }
 }
 

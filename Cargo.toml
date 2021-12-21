@@ -15,6 +15,8 @@ embedded-hal = "0.2.6"
 onewire = "0.3.13"
 usb-device = "0.2.8"
 usbd-serial = "0.1.1"
+string-helper = { path= "../../embedded_lib/string_helper" } 
+
 
 # [features]
 # default = ["atsamd-hal/samd21g", "atsamd-hal/samd21g-rt"]
